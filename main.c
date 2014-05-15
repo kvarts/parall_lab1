@@ -1,70 +1,95 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
-#include <string.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <malloc.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <pthread.h>
+#include <errno.h>
 
+#define MAX_NAME 256
+#define TYPE_FOR_BLOCK long long
+#define MAX_MEM 500000
 
-
-#define OPT_NEED 1
-#define OPT_UNKNW 2
+#define pi 3.1415926535897932384
+#define abs(x) x<0?-x:x
+#define max_cnt10 1000000000000000000
+#define OPT_ERROR 1
 #define FILE_NOT_OPEN 3
 #define HASH_ERROR 4
 #define PTHREAD_ERROR 5
 #define MEM_ERROR 6
 #define FSTAT 7
-#define N 5
-#define MY_TYPE unsigned short int
 
 pthread_mutex_t mutex_hash;
-
-unsigned long long int hash_result;
+TYPE_FOR_BLOCK hash_result;
+TYPE_FOR_BLOCK *data_file;
 int limit_data;
-MY_TYPE *data_file;
-double temp_result=0;
 
-unsigned long long int fact(int x)
+long long int fact(int i)
 {
-	return  x==0?1:x*fact(x-1);
+	return  i==0?1:i*fact(i-1);
 }
 
-double my_pow(MY_TYPE x, int i)
+double my_pow(double x, int n)
 {
-	return i==0?1:x*my_pow(x,i-1);
-}
-
-unsigned long long int my_func(MY_TYPE x)
-{
+	double result = 1;
 	int i;
-	double sum = 1;
-	unsigned long long int result;
-	if (x == 0 || x == 1) return 1;
-	for (i = 1; i < N; i++)
-	{
-		sum += fact(i)/my_pow(x,i);
-	}
-	
-	sum*=100000;
-	result = sum;
-	temp_result+=sum;
-	printf("%d %lld\n",x, result);
+	for (i = 0; i < n; i++)
+		result *= x;
 	return result;
 }
 
-void *pthread_exp(void *arg)
+double format_pi(double x)
+{
+	double result = x;
+	if (result > pi)
+		result -= abs(result)/pi * pi;
+		if (result < -pi)
+			result += abs(result)/pi * pi;
+		//printf("[debug]: abs(x) = %f\n", abs(result));
+	
+	return result;
+}
+
+double cos_teilor(double x)
+{	
+	x = format_pi(x);
+	int i = 0;
+	double result = 1;
+	double temp1, temp4;
+	TYPE_FOR_BLOCK temp2;
+	short temp3 = -1;
+	for(i = 1; i < 10; i++){
+		temp1 = my_pow(x, 2*i);
+		temp2 = fact(2*i);
+		temp4 = (double) temp1/temp2;
+		result += temp4*temp3;
+		temp3 *= -1;
+	}
+	return result;
+}
+
+TYPE_FOR_BLOCK func_for_hash(double x)
+{
+	//printf("[debug]: Вход в функцию для хэша. x=%lld\n",(long long) x);
+	double cos = cos_teilor(x);
+	//printf("[debug]: cos(%f)=%f\n", x, cos);
+	TYPE_FOR_BLOCK result = cos * max_cnt10;
+}
+
+void *pthread_func(void *arg)
 {
 	int start = *(int *) arg;
 	int num_data = start;
-	unsigned long long int func;
-
+	TYPE_FOR_BLOCK func;
+	//printf("[debug]: Номер ячейки старта - %d\n", start);
 	while(num_data <= start + limit_data -1) {
-		func = my_func(*(data_file+num_data));
-		
+		func = func_for_hash(*(data_file+num_data));
 		pthread_mutex_lock(&mutex_hash);
+		//printf("[debug]: Хэш равен: %#llX\n", hash_result);
 		hash_result ^= func;
 		pthread_mutex_unlock(&mutex_hash);
 		num_data++;
@@ -74,41 +99,36 @@ void *pthread_exp(void *arg)
 
 int main(int argc, char* argv[])
 {
-	int opt;
-	char *file_name;
+	char name_file[MAX_NAME];
 	int handle_file; 
-	int cnt_cores, cnt_mem_free;
+	int cnt_cores;
+	long cnt_mem;
 	int i;
 
-	while((opt=getopt(argc, argv, ":f:")) != -1) {
-		switch (opt) {
-		case 'f':
-			file_name = optarg;
-			break;
-		case ':':
-			return error_exit(OPT_NEED);
-		case '?':
-			return error_exit(OPT_UNKNW);
-		}
-	}
-
-	cnt_cores = 1;//sysconf(_SC_NPROCESSORS_ONLN);
-	printf("Cores:  \t%d\n", cnt_cores);
-
-	cnt_mem_free = (0.3 * sysconf(_SC_AVPHYS_PAGES) * sysconf(_SC_PAGE_SIZE) /
-					sizeof(MY_TYPE)) * sizeof(MY_TYPE);
-	printf("Mem:\t%d Mb\n", cnt_mem_free);
-
-	handle_file = open(file_name,O_RDONLY);
-	if(!handle_file) {
+	if (argc != 2)
+		error_exit(OPT_ERROR);
+	
+	strcpy(name_file, argv[1]);
+	handle_file = open(name_file, O_RDONLY);
+	if (!handle_file) {
 		return error_exit(FILE_NOT_OPEN);
 	}
+	
+	cnt_cores = sysconf(_SC_NPROCESSORS_ONLN);
+	printf("Количество ядер процессора:\t%d\n", cnt_cores);
 
-	if (hash(handle_file, cnt_cores, cnt_mem_free) == -1)
+	cnt_mem = (0.2 * sysconf(_SC_AVPHYS_PAGES) * sysconf(_SC_PAGE_SIZE) /
+					sizeof(TYPE_FOR_BLOCK)) * sizeof(TYPE_FOR_BLOCK);
+	cnt_mem = cnt_mem < MAX_MEM ? cnt_mem : MAX_MEM;
+	
+	printf("Объем используемой памяти:\t%ld Mb\n", (long) cnt_mem/1024);
+
+	if (hash(handle_file, cnt_cores, cnt_mem) == -1)
 		return error_exit(HASH_ERROR);
+	
 	close(handle_file);
 	free(data_file);
-	printf("hash = %#10llx\ntemp=%.15f\n", hash_result, temp_result);
+	printf("Хэш = %#llX\n",(long long) hash_result);
 	return 1;
 }
 
@@ -122,55 +142,49 @@ int hash(int file, int cores, int mem)
 
 	pthread_mutex_init(&mutex_hash, NULL);
 	hash_result = 0;
-	
-	if(fstat(file, &stat_buf) < 0)
-		return error_exit(FSTAT);
-	
-	if ((stat_buf.st_size) < mem) 	
-		size =	stat_buf.st_size/sizeof(MY_TYPE);
-	else 
-		size =	mem/sizeof(MY_TYPE);
 
-	data_file =  calloc(size,sizeof(MY_TYPE));
+	size =	mem/sizeof(TYPE_FOR_BLOCK);
+
+	data_file = calloc (size, sizeof(TYPE_FOR_BLOCK));
 	if (!data_file)
 		return error_exit(MEM_ERROR);
-		
+	//else
+		//printf("[debug]: Выделена память\n");
 	while(1) {
-		memset((MY_TYPE *)data_file, '\0', size);
+		memset((TYPE_FOR_BLOCK *)data_file, '\0', size);
 		cnt_read = read(file, data_file, mem);
-		if(!cnt_read)
+		if (!cnt_read)
 			break;
 		limit_data = cnt_read / cores;
 		
-		for(i = 0; i < cores; i++) {
+		//printf("[debug]: Кол-во байт на поток - %d\n", limit_data);
+		
+		for (i = 0; i < cores; i++) {
 			start_points[i] = i * limit_data;
-			printf("limit=%d start=%d\n",limit_data, start_points[i]);
-			if(pthread_create(	&id[i],	NULL, pthread_exp, &start_points[i])) {
+			if(pthread_create(&id[i], NULL, pthread_func, &start_points[i])) {
 				return error_exit(PTHREAD_ERROR);
 			}
+			//printf("[debug]: Создан поток с id = %d\n", (int) id[i]);
 		}
 
-		for(i=0; i<cores; i++) 
+		for (i=0; i<cores; i++) {
+			//printf("[debug]: Ожидается поток с id = %d\n", (int) id[i]);
 			pthread_join(id[i], NULL);
+			//printf("[debug]: Завершился поток с id = %d\n", (int) id[i]);
+		}
 	}
 	return 1;
 }
-
-
-
 
 int error_exit(int id_error)
 {
 	char text_error[80];
 	int i;
-	for(i=0; i<80; i++)
+	for (i=0; i<80; i++)
 		text_error[i]='\0';
 	switch (id_error) {
-		case OPT_NEED:
+		case OPT_ERROR:
 			strcpy(text_error, "Error! Need a value of option!\n");
-			break;
-		case OPT_UNKNW:
-			strcpy(text_error, "Error! Unknown an option!\n");
 			break;
 		case FILE_NOT_OPEN:
 			strcpy(text_error, "Error! File doesn`t opened!\n");
@@ -189,5 +203,7 @@ int error_exit(int id_error)
 			break;
 	}
 	write(0, text_error, 80);
-	return -1;
+	if (errno)
+		printf("Комментарий: %s\n", strerror(errno));
+	_exit(EXIT_FAILURE);
 }

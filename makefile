@@ -1,6 +1,6 @@
 myhash: main.o
-	gcc main.o -o myhash -lm -lpthread -g
+	gcc -o myhash main.o -lpthread
 main.o: main.c
-	gcc -c main.c -lm -lpthread -g
+	gcc -c main.c
 clean:
 	rm *.o myhash
