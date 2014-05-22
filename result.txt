@@ -1,0 +1,28 @@
+ivan@JustPC:~/parall/lab1$ make
+gcc -c main.c
+gcc -o myhash main.o -lpthread
+ivan@JustPC:~/parall/lab1$ ./myhash test.ppm 1
+Количество ядер процессора:	1
+Объем используемой памяти:	976 Mb
+Время выполнения программы = 0s 614ms
+Хэш = 0X8620DDFC275FF900
+ivan@JustPC:~/parall/lab1$ ./myhash test.ppm 2
+Количество ядер процессора:	2
+Объем используемой памяти:	976 Mb
+Время выполнения программы = 0s 344ms
+Хэш = 0X8620DDFC275FF900
+ivan@JustPC:~/parall/lab1$ ./myhash test.ppm 3
+Количество ядер процессора:	3
+Объем используемой памяти:	976 Mb
+Время выполнения программы = 0s 249ms
+Хэш = 0X8620DDFC275FF900
+ivan@JustPC:~/parall/lab1$ ./myhash test.ppm 4
+Количество ядер процессора:	4
+Объем используемой памяти:	976 Mb
+Время выполнения программы = 0s 225ms
+Хэш = 0X8620DDFC275FF900
+ivan@JustPC:~/parall/lab1$ ./myhash test.ppm
+Количество ядер процессора:	4
+Объем используемой памяти:	976 Mb
+Время выполнения программы = 0s 216ms
+Хэш = 0X8620DDFC275FF900

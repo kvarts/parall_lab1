@@ -8,14 +8,16 @@
 #include <sys/stat.h>
 #include <pthread.h>
 #include <errno.h>
+#include <stdint.h>
 
 #define MAX_NAME 256
 #define TYPE_FOR_BLOCK long long
-#define MAX_MEM 500000
+#define MAX_MEM 1000000
 
 #define pi 3.1415926535897932384
 #define abs(x) x<0?-x:x
 #define max_cnt10 1000000000000000000
+
 #define OPT_ERROR 1
 #define FILE_NOT_OPEN 3
 #define HASH_ERROR 4
@@ -23,10 +25,19 @@
 #define MEM_ERROR 6
 #define FSTAT 7
 
+#define debug 0
+
 pthread_mutex_t mutex_hash;
 TYPE_FOR_BLOCK hash_result;
 TYPE_FOR_BLOCK *data_file;
 int limit_data;
+
+uint64_t rdtsc()
+{
+	uint64_t x;
+	__asm__ volatile ("rdtsc\n\tshl $32, %%rdx\n\tor %%rdx, %%rax" : "=a" (x) : : "rdx");
+	return x;
+}
 
 long long int fact(int i)
 {
@@ -49,8 +60,6 @@ double format_pi(double x)
 		result -= abs(result)/pi * pi;
 		if (result < -pi)
 			result += abs(result)/pi * pi;
-		//printf("[debug]: abs(x) = %f\n", abs(result));
-	
 	return result;
 }
 
@@ -74,9 +83,7 @@ double cos_teilor(double x)
 
 TYPE_FOR_BLOCK func_for_hash(double x)
 {
-	//printf("[debug]: Вход в функцию для хэша. x=%lld\n",(long long) x);
 	double cos = cos_teilor(x);
-	//printf("[debug]: cos(%f)=%f\n", x, cos);
 	TYPE_FOR_BLOCK result = cos * max_cnt10;
 }
 
@@ -85,11 +92,13 @@ void *pthread_func(void *arg)
 	int start = *(int *) arg;
 	int num_data = start;
 	TYPE_FOR_BLOCK func;
-	//printf("[debug]: Номер ячейки старта - %d\n", start);
+	if (debug) 
+		printf("[debug]: Номер ячейки старта - %d\n", start);
 	while(num_data <= start + limit_data -1) {
 		func = func_for_hash(*(data_file+num_data));
 		pthread_mutex_lock(&mutex_hash);
-		//printf("[debug]: Хэш равен: %#llX\n", hash_result);
+		if (debug) 
+			printf("[debug]: Хэш равен: %#llX\n", hash_result);
 		hash_result ^= func;
 		pthread_mutex_unlock(&mutex_hash);
 		num_data++;
@@ -105,7 +114,7 @@ int main(int argc, char* argv[])
 	long cnt_mem;
 	int i;
 
-	if (argc != 2)
+	if (argc != 2 && argc != 3)
 		error_exit(OPT_ERROR);
 	
 	strcpy(name_file, argv[1]);
@@ -114,7 +123,10 @@ int main(int argc, char* argv[])
 		return error_exit(FILE_NOT_OPEN);
 	}
 	
-	cnt_cores = sysconf(_SC_NPROCESSORS_ONLN);
+	if (argc == 3)
+		sscanf(argv[2], "%d", &cnt_cores);
+	else
+		cnt_cores = sysconf(_SC_NPROCESSORS_ONLN);
 	printf("Количество ядер процессора:\t%d\n", cnt_cores);
 
 	cnt_mem = (0.2 * sysconf(_SC_AVPHYS_PAGES) * sysconf(_SC_PAGE_SIZE) /
@@ -122,55 +134,60 @@ int main(int argc, char* argv[])
 	cnt_mem = cnt_mem < MAX_MEM ? cnt_mem : MAX_MEM;
 	
 	printf("Объем используемой памяти:\t%ld Mb\n", (long) cnt_mem/1024);
-
-	if (hash(handle_file, cnt_cores, cnt_mem) == -1)
-		return error_exit(HASH_ERROR);
+	
+	uint64_t start_time = rdtsc();
+	hash(handle_file, cnt_cores, cnt_mem);
+	uint64_t end_time = rdtsc();
+	
+	long long diff = (end_time - start_time) / 2800000;
+	int sec = diff / 1000;
+	int	msec = diff % 1000;
+	printf("Время выполнения программы = %ds %dms\n",sec, msec);
 	
 	close(handle_file);
 	free(data_file);
-	printf("Хэш = %#llX\n",(long long) hash_result);
+	printf("Хэш = %#llX\n", hash_result);
 	return 1;
 }
 
 
-int hash(int file, int cores, int mem)
+int hash(int file, int cores, long mem)
 {
-	int cnt_read,i,size;
+	long cnt_read,i,size;
 	int start_points[cores];
-	struct stat stat_buf;
 	pthread_t id[cores];
 
 	pthread_mutex_init(&mutex_hash, NULL);
 	hash_result = 0;
-
+	if (debug) 
+		printf("[debug]: mem=%ld\n", mem);
 	size =	mem/sizeof(TYPE_FOR_BLOCK);
-
 	data_file = calloc (size, sizeof(TYPE_FOR_BLOCK));
 	if (!data_file)
 		return error_exit(MEM_ERROR);
-	//else
-		//printf("[debug]: Выделена память\n");
+	else if (debug) 
+		printf("[debug]: Выделена память\n");
 	while(1) {
-		memset((TYPE_FOR_BLOCK *)data_file, '\0', size);
+		memset((TYPE_FOR_BLOCK *)data_file, '\0', mem);
 		cnt_read = read(file, data_file, mem);
-		if (!cnt_read)
+		if (cnt_read == 0)
 			break;
-		limit_data = cnt_read / cores;
-		
-		//printf("[debug]: Кол-во байт на поток - %d\n", limit_data);
-		
+		limit_data = cnt_read / cores / sizeof(TYPE_FOR_BLOCK);
+		if (debug) 
+				printf("[debug]: Кол-во байт на поток - %d\n", limit_data);
 		for (i = 0; i < cores; i++) {
 			start_points[i] = i * limit_data;
 			if(pthread_create(&id[i], NULL, pthread_func, &start_points[i])) {
 				return error_exit(PTHREAD_ERROR);
 			}
-			//printf("[debug]: Создан поток с id = %d\n", (int) id[i]);
+			if (debug) 
+				printf("[debug]: Создан поток с id = %d\n", (int) id[i]);
 		}
 
 		for (i=0; i<cores; i++) {
-			//printf("[debug]: Ожидается поток с id = %d\n", (int) id[i]);
 			pthread_join(id[i], NULL);
-			//printf("[debug]: Завершился поток с id = %d\n", (int) id[i]);
+			if (debug) 
+				printf("[debug]: Завершился поток с id = %d\n", (int) id[i]);
 		}
 	}
 	return 1;
@@ -188,9 +205,6 @@ int error_exit(int id_error)
 			break;
 		case FILE_NOT_OPEN:
 			strcpy(text_error, "Error! File doesn`t opened!\n");
-			break;
-		case HASH_ERROR:
-			strcpy(text_error, "Error! Hash doesn`t calculate!\n");
 			break;
 		case PTHREAD_ERROR:
 			strcpy(text_error, "Error! Pthread doesn`t calculate!\n");
